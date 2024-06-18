@@ -1,0 +1,18 @@
+dtmc
+
+const double h = 0.005;
+const int N = 20;
+const double sig = 0.05;
+const double tau = 1.0;
+const double X_states_space = 0.1;
+
+module traj 
+	state:[0..N] init 10;
+
+	[stable] (true) ->  
+	   0.5*sig*sig/(h*h) - X_states_space/tau/(2*h) :(state'=min(N,state+1))
+	 + 1.0-sig*sig/(h*h) :(state'=state)
+	 + 0.5*sig*sig/(h*h) + X_states_space/tau/(2*h) :(state'=max(0,state-1));
+	
+
+endmodule
