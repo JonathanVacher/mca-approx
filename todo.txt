@@ -1,0 +1,10 @@
+proto :
+- ajouter cemetery state
+- ajouter safety set / state set plutot que alpha/beta
+- ajouter x_init plutot que milieu
+
+papier :
+- ajouter smoothing bound = M*epsilon/2 plutot que M*epsilon (valable seulement pour polynomial gluing)
+- ajouter prism / verif / simu 
+- voir si propriétés valables en continu (tubes)
+
