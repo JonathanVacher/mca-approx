@@ -18,8 +18,13 @@ class PolynomialGluing:
         self.config = config
         self.degree = degree
         self.num_equations = degree + 1
-        self.alpha = config.alpha
-        self.beta = config.beta
+        self.x_safe_min = config.x_safe_min
+        self.x_safe_max = config.x_safe_max
+        self.epsilon = config.epsilon
+        self.x_min = config.x_min
+        self.x_max = config.x_max     
+        # self.alpha = config.alpha
+        # self.beta = config.beta
 
         self._build_and_solve()
 
@@ -50,52 +55,66 @@ class PolynomialGluing:
                 eq_tab_beta[idx] += factor * symbols[jj] * x ** (jj - ii)
 
         # Substitute operational domain bounds
-        final_system = []
+        final_systemd = []
         for lines in range(int(self.num_equations / 2)):
-            final_system.append(eq_tab[lines].subs(x, self.alpha))
-            final_system.append(eq_tab_beta[lines + int(self.num_equations / 2)].subs(x, self.beta))
+            final_systemd.append(eq_tab[lines].subs(x, self.x_safe_max))
+            final_systemd.append(eq_tab_beta[lines + int(self.num_equations / 2)].subs(x, self.x_safe_max+self.epsilon))
+
+        final_systemg = []
+        for lines in range(int(self.num_equations / 2)):
+            final_systemg.append(eq_tab[lines].subs(x, self.x_safe_min))
+            final_systemg.append(eq_tab_beta[lines + int(self.num_equations / 2)].subs(x, self.x_safe_min-self.epsilon))
+
 
         # Solve system linearly
-        solved_coeffs = sp.solve(final_system, symbols)
-        polynomial_func = sum(solved_coeffs[symbols[i]] * x**i for i in range(self.num_equations))
+        solved_coeffsg = sp.solve(final_systemg, symbols)
+        polynomial_funcg = sum(solved_coeffsg[symbols[i]] * x**i for i in range(self.num_equations))
+        solved_coeffsd = sp.solve(final_systemd, symbols)
+        polynomial_funcd = sum(solved_coeffsd[symbols[i]] * x**i for i in range(self.num_equations))
+
 
         # Vectorize operations for crisp matplotlib analysis
-        self.p_func = sp.lambdify(x, polynomial_func, "numpy")
-        self.d3_func = sp.lambdify(x, sp.diff(polynomial_func, x, 3), "numpy")
-        self.d4_func = sp.lambdify(x, sp.diff(polynomial_func, x, 4), "numpy")
+        self.p_funcg = sp.lambdify(x, polynomial_funcg, "numpy")
+        self.d3_funcg = sp.lambdify(x, sp.diff(polynomial_funcg, x, 3), "numpy")
+        self.d4_funcg = sp.lambdify(x, sp.diff(polynomial_funcg, x, 4), "numpy")
+        self.p_funcd = sp.lambdify(x, polynomial_funcd, "numpy")
+        self.d3_funcd = sp.lambdify(x, sp.diff(polynomial_funcd, x, 3), "numpy")
+        self.d4_funcd = sp.lambdify(x, sp.diff(polynomial_funcd, x, 4), "numpy")
 
         self._generate_profile_space()
 
     def _generate_profile_space(self):
         """Applies spatial mapping across intervals."""
-        self.xx = np.linspace(-self.config.x_max, self.config.x_max, 2000)
+        self.xx = np.linspace(self.config.x_min, self.config.x_max, 2000)
         self.pfxx = np.zeros_like(self.xx)
 
         # Vectorized assignment filtering over piecewise ranges
-        mask1 = (self.xx >= -self.alpha) & (self.xx <= self.alpha)
-        mask2 = (self.xx > self.alpha) & (self.xx <= self.beta)
-        mask3 = (self.xx >= -self.beta) & (self.xx < -self.alpha)
+        mask1 = (self.xx >= self.x_safe_min) & (self.xx <= self.x_safe_max)
+        mask2 = (self.xx > self.x_safe_max) & (self.xx <= self.x_safe_max+self.epsilon)
+        mask3 = (self.xx >= self.x_safe_min-self.epsilon) & (self.xx < self.x_safe_min)
+        # mask4 = ...
+        # print(mask3)
 
         self.pfxx[mask1] = 1.0
-        self.pfxx[mask2] = self.p_func(self.xx[mask2])
-        self.pfxx[mask3] = self.p_func(-self.xx[mask3])
+        self.pfxx[mask2] = self.p_funcd(self.xx[mask2])
+        self.pfxx[mask3] = self.p_funcg(self.xx[mask3])
 
         # Derivatives profiles over mapping zones
         self.pfd3xx = np.zeros_like(self.xx)
         self.pfd4xx = np.zeros_like(self.xx)
-        self.pfd3xx[mask2] = self.d3_func(self.xx[mask2])
-        self.pfd4xx[mask2] = self.d4_func(self.xx[mask2])
-        self.pfd3xx[mask3] = -self.d3_func(-self.xx[mask3])  # chain rule correction
-        self.pfd4xx[mask3] = self.d4_func(-self.xx[mask3])
+        self.pfd3xx[mask2] = self.d3_funcd(self.xx[mask2])
+        self.pfd4xx[mask2] = self.d4_funcd(self.xx[mask2])
+        self.pfd3xx[mask3] = -self.d3_funcg(self.xx[mask3])  # chain rule correction
+        self.pfd4xx[mask3] = self.d4_funcg(self.xx[mask3])
 
     def plot_gluing_profile(self) -> Tuple[plt.Figure, plt.Axes]:
         """Plots the resulting C^4 smooth gluing function profile."""
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(self.xx, self.pfxx, label="Gluing Function $\phi(x)$", color="purple", lw=2)
 
-        ax.axvspan(-self.alpha, self.alpha, color="blue", alpha=0.15, label="Indicator Zone")
-        ax.axvspan(-self.beta, -self.alpha, color="red", alpha=0.15, label="$C^4$ Gluing Zone")
-        ax.axvspan(self.alpha, self.beta, color="red", alpha=0.15)
+        ax.axvspan(self.x_safe_min, self.x_safe_max, color="blue", alpha=0.15, label="Indicator Zone")
+        ax.axvspan(self.x_safe_min-self.epsilon, self.x_safe_min, color="red", alpha=0.15, label="$C^4$ Gluing Zone")
+        ax.axvspan(self.x_safe_max, self.x_safe_max+self.epsilon, color="red", alpha=0.15)
 
         ax.set_xlabel("State Space ($x$)")
         ax.set_ylabel("Weight")
@@ -116,7 +135,7 @@ class PolynomialGluing:
         Bmax = 1/self.config.tau
 
         density_bound = 1/((2*np.pi*lambdamin*self.config.t_max)**(1/2))*np.exp(Bmax**2*self.config.t_max/(2*lambdamin))
-        smoothing_error = density_bound*(self.beta-self.alpha)/2
+        smoothing_error = density_bound*(self.epsilon)/2
 
         return (float(weak_bound),float(smoothing_error))
 

@@ -12,9 +12,11 @@ class StochasticSimulator:
 
     def __init__(self, config: SDEConfig):
         self.config = config
-        self.x_space = np.arange(-config.beta, config.beta + config.h, config.h)
+        # un etat supplémentaire en haut et en bas : cemetery states (absorbing)
+        self.x_space = np.arange(config.x_safe_min - config.h, config.x_safe_max + 2*config.h, config.h)
         self.n_states = self.x_space.shape[0]
         self.q_matrix = self._assemble_generator()
+        self.start_idx = np.searchsorted(self.x_space, self.config.x_init)
 
     def _assemble_generator(self) -> np.ndarray:
         """Assembles continuous time Markov Chain infinitesimal matrix generators."""
@@ -37,8 +39,9 @@ class StochasticSimulator:
                 q[i, i + 1] = rate_up
 
         # Boundary condition adjustments matching initial structure
-        q[0, 0] = - (sig**2 / h**2)
-        q[-1, -1] = - (sig**2 / h**2)
+        # New BC : absorbing 
+        q[0, :] = 0 #- (sig**2 / h**2)
+        q[-1, :] = 0 #- (sig**2 / h**2)
         return q
 
     def run_monte_carlo(self, n_reps: int = 1000) -> Dict[str, np.ndarray]:
@@ -48,7 +51,7 @@ class StochasticSimulator:
         n_steps = int(t_max / dt) + 2
 
         exp_dt_q = linalg.expm(dt * self.q_matrix).T
-        mid_idx = (self.n_states - 1) // 2
+        # start_idx =  np.searchsorted(self.x_space, self.config.x_init) #(self.n_states - 1) // 2
 
         sde_paths = np.zeros((n_reps, n_steps))
         markov_paths = np.zeros((n_reps, n_steps))
@@ -58,12 +61,12 @@ class StochasticSimulator:
             step_idx = 0
 
             # State space trajectory initial conditions
-            x_sde = 0.0
+            x_sde = self.config.x_init
             markov_state_vector = np.zeros(self.n_states)
-            markov_state_vector[mid_idx] = 1.0
+            markov_state_vector[self.start_idx] = 1.0
 
             sde_paths[rep, step_idx] = x_sde
-            markov_paths[rep, step_idx] = self.x_space[mid_idx]
+            markov_paths[rep, step_idx] = self.x_space[self.start_idx]
 
             while t < t_max:
                 t += dt

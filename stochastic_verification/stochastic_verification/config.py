@@ -16,9 +16,14 @@ class SDEConfig:
         tau: float = 0.5,
         sig: float = 1.0,
         h: float = 0.005,
-        alpha: float = 0.5,
-        beta: float = 1.0,
-        x_max: float = 1.2,
+        # alpha: float = 0.5,
+        # beta: float = 1.0,
+        x_safe_min: float =-2.0,
+        x_safe_max: float = 2.0,
+        epsilon: float = 0.3,
+        x_min: float = -2.5,
+        x_max: float = 2.5,
+        x_init: float = 0.5,
         seed: int = 5,
     ):
         self.dt = dt
@@ -26,9 +31,12 @@ class SDEConfig:
         self.tau = tau
         self.sig = sig
         self.h = h
-        self.alpha = alpha
-        self.beta = beta
+        self.x_safe_min = x_safe_min
+        self.x_safe_max = x_safe_max
+        self.epsilon = epsilon
+        self.x_min = x_min
         self.x_max = x_max
+        self.x_init = x_init
         self.seed = seed
 
         # Enforce global random state reproducibly
