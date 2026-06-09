@@ -5,6 +5,8 @@ import numpy as np
 import scipy.linalg as linalg
 import scipy.stats as st
 from .config import SDEConfig
+import matplotlib.pyplot as plt
+
 
 
 class StochasticSimulator:
@@ -102,3 +104,35 @@ class StochasticSimulator:
                 markov_paths[rep, step_idx] = self.x_space[state_idx]
 
         return {"sde": sde_paths, "markov": markov_paths, "time_steps": np.arange(n_steps) * dt}
+    
+
+    def plot_one_sim(self,sim_results,n=1):
+        plt.figure(figsize=(10, 4))
+        plt.plot(sim_results["time_steps"], sim_results["sde"][n], label="SDE Sample Path (Euler)", color="blue", alpha=0.7)
+        plt.plot(sim_results["time_steps"], sim_results["markov"][n], label="MCA Sample Path", color="orange", linestyle="--", alpha=0.8)
+        plt.title("SDE vs MCA Path Comparison")
+        plt.xlabel("Time (t)")
+        plt.ylabel("State (X)")
+        plt.legend()
+        plt.axhspan(self.config.x_safe_min, self.config.x_safe_max, color='green', alpha=0.15)
+        plt.axhspan(self.config.x_safe_min-self.config.epsilon, self.config.x_safe_min, color='red', alpha=0.15)
+        plt.axhspan(self.config.x_safe_max, self.config.x_safe_max+self.config.epsilon, color='red', alpha=0.15)
+        plt.grid(True)
+        plt.show()
+
+    def plot_mc_sims(self,sim_results):
+        plt.figure(figsize=(10, 4))
+
+        for i in range(0,len(sim_results["sde"]),1):
+        # for i in range(50,51):
+            plt.plot(sim_results["time_steps"], sim_results["sde"][i], label="SDE Sample Path (Euler)", color="blue", alpha=0.7)
+            plt.plot(sim_results["time_steps"], sim_results["markov"][i], label="MCA Sample Path", color="orange", linestyle="--", alpha=0.8)
+        plt.title("SDE and MCA Monte-Carlo paths")
+        plt.xlabel("Time (t)")
+        plt.ylabel("State (X)")
+        plt.axhspan(self.config.x_safe_min, self.config.x_safe_max, color='green', alpha=0.15, label='Safe Region')
+        plt.axhspan(self.config.x_safe_min-self.config.epsilon, self.config.x_safe_min, color='red', alpha=0.15, label='Gluing Region')
+        plt.axhspan(self.config.x_safe_max, self.config.x_safe_max+self.config.epsilon, color='red', alpha=0.15, label='Gluing Region')
+        # plt.legend()
+        plt.grid(True)
+        plt.show()
