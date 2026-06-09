@@ -68,7 +68,7 @@ class StochasticSimulator:
             sde_paths[rep, step_idx] = x_sde
             markov_paths[rep, step_idx] = self.x_space[self.start_idx]
 
-            while t < t_max:
+            while t <= t_max:
                 t += dt
                 step_idx += 1
 

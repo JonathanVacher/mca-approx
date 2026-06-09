@@ -44,11 +44,39 @@ module MCA_Ornstein_Uhlenbeck
 
     // Internal state transitions
     [] s > 0 & s < N-1 -> rate_up   : (s'=s+1) + rate_down : (s'=s-1);
-    [] s = 0          -> rate_up   : (s'=s+1);
-    [] s = N-1        -> rate_down : (s'=s-1);
+    [] s = 0          -> rate_up   : (s'=0) + rate_down : (s'=0);
+    [] s = N-1        -> rate_down : (s'=N-1) + rate_up   : (s'=N-1);
 
 endmodule
 
 // Labeling safety criteria
 label "safe" = x_val >= safe_min & x_val <= safe_max;
+"""
+
+
+
+
+
+def generate_pctl(
+    T_max: float
+) -> str:
+    """Generates a PRISM pctl properties to verify.
+    """
+    return f"""
+const double T_max = {T_max};
+
+// 1. Path Safety Probability: 
+// Computes the probability that the Markov Chain STAYS continuously 
+// within the safe set [safe_min, safe_max] from time t=0 up to T_max.
+P=? [ G<=T_max "safe" ]
+
+// 2. Fixed-Horizon Target-Set Probability:
+// Computes the probability that the Markov Chain IS CURRENTLY in the 
+// safe set exactly at the final time T_max (Transient probability).
+P=? [ true U[T_max,T_max] "safe" ]
+
+// Find the strategy that MAXIMIZES the probability of staying safe
+// Pmax=? [ G<=T_max "safe" ]
+
+
 """
