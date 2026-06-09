@@ -2,19 +2,25 @@
 
 
 def generate_prism_model(
-    tau: float,
-    sig: float,
-    h: float,
-    n_states: int,
-    x_min: float,
-    safe_xmin: float,
-    safe_xmax: float,
-    init_state: int = 20,
+    config,
+    simulator
 ) -> str:
+    
+    tau=config.tau
+    sig=config.sig
+    h=config.h
+    n_states=simulator.n_states
+    x_min=config.x_safe_min-config.h
+    safe_xmin=config.x_safe_min
+    safe_xmax=config.x_safe_max
+    init_state=simulator.start_idx
+
     """Generates a PRISM Continuous-Time Markov Chain (CTMC) model string
 
     based on a nodal generator discretization matrix.
     """
+
+
     return f"""ctmc
 
 // SDE parameters
@@ -57,11 +63,10 @@ label "safe" = x_val >= safe_min & x_val <= safe_max;
 
 
 
-def generate_pctl(
-    T_max: float
-) -> str:
+def generate_pctl(config) -> str:
     """Generates a PRISM pctl properties to verify.
     """
+    T_max = config.t_max
     return f"""
 const double T_max = {T_max};
 
