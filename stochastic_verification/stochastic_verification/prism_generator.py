@@ -63,29 +63,6 @@
 
 
 
-# def generate_pctl(config) -> str:
-#     """Generates a PRISM pctl properties to verify.
-#     """
-#     T_max = config.t_max
-#     return f"""
-# const double T_max = {T_max};
-
-# // 1. Path Safety Probability: 
-# // Computes the probability that the Markov Chain STAYS continuously 
-# // within the safe set [safe_min, safe_max] from time t=0 up to T_max.
-# P=? [ G<=T_max "safe" ]
-
-# // 2. Fixed-Horizon Target-Set Probability:
-# // Computes the probability that the Markov Chain IS CURRENTLY in the 
-# // safe set exactly at the final time T_max (Transient probability).
-# P=? [ true U[T_max,T_max] "safe" ]
-
-# // Find the strategy that MAXIMIZES the probability of staying safe
-# // Pmax=? [ G<=T_max "safe" ]
-
-
-# """
-
 
 """Generates PRISM CTMC model with precomputed rates and absorbing boundaries."""
 
@@ -194,4 +171,31 @@ endmodule
 
 // Safety label
 label "safe" = x_val >= safe_min & x_val <= safe_max;
+"""
+
+
+
+
+
+def generate_pctl(config) -> str:
+    """Generates a PRISM pctl properties to verify.
+    """
+    T_max = config.t_max
+    return f"""
+const double T_max = {T_max};
+
+// 1. Path Safety Probability: 
+// Computes the probability that the Markov Chain STAYS continuously 
+// within the safe set [safe_min, safe_max] from time t=0 up to T_max.
+P=? [ G<=T_max "safe" ]
+
+// 2. Fixed-Horizon Target-Set Probability:
+// Computes the probability that the Markov Chain IS CURRENTLY in the 
+// safe set exactly at the final time T_max (Transient probability).
+P=? [ true U[T_max,T_max] "safe" ]
+
+// Find the strategy that MAXIMIZES the probability of staying safe
+// Pmax=? [ G<=T_max "safe" ]
+
+
 """
