@@ -91,36 +91,60 @@ class BaseGluing:
     # ---- error model ----
     def compute_error_bounds(self) -> Tuple[float, float]:
         # n_t_steps = self.config.t_max / self.config.dt
+        max_weak_error = 0.0
+        max_smoothing_error = 0.0
+        ### NO CONTROL 
+        if not self.config.is_controlled:
+            ############## WEAK ##########################
+            ### OLD, a verifier 
+            # nu = self.config.sig
+            # theta = 1/self.config.tau
+            
+            ###NEW, pas sûr
+            nu = max(np.vectorize(self.config.sigma)(self.xx[self.masks["core"]]))
+            theta = max(np.vectorize(self.config.mu)(self.xx[self.masks["core"]]))
+            # print(max(self.pfd4xx))
+            # weak_bound = n_t_steps * self.config.dt * self.config.h  # Keeping exact original formula logic
+            max_weak_error = self.config.t_max*self.config.h**2*((nu**2)/8*max(self.pfd4xx)+ theta/6*max(self.pfd4xx)) # A VERIFIER
+
+
+            ############## SMOOTH ##########################
+            lambdafunc = lambda x: self.config.sigma(x)*self.config.sigma(x)
+            # lambdamin = self.config.sig**2
+            lambdamin = min((np.vectorize(lambdafunc)(self.xx[self.masks["core"]])))
+            # print(lambdamin)
+            # Bmax = max(np.abs(self.config.x_safe_min),np.abs(self.config.x_safe_max))/self.config.tau
+            Bmax = max(np.vectorize(self.config.mu)(self.xx[self.masks["core"]]))
+            # print(Bmax)
+
+            density_bound = 1/((2*np.pi*lambdamin*self.config.t_max)**(1/2))*np.exp(Bmax**2*self.config.t_max/(2*lambdamin))
+            max_smoothing_error = max(self.pfxx)*density_bound*(self.epsilon)/2
+
+        ### CONTROL 
+        else:
+            for u_val in self.config.U:
+
+                ###NEW, pas sûr
+                mu_fixed = lambda x: self.config.mu(x,u_val)
+                nu = max(np.vectorize(self.config.sigma)(self.xx[self.masks["core"]]))
+                theta = max(np.vectorize(mu_fixed)(self.xx[self.masks["core"]]))
+                weak_error = self.config.t_max*self.config.h**2*((nu**2)/8*max(self.pfd4xx)+ theta/6*max(self.pfd4xx)) # A VERIFIER
+
+
+                ############## SMOOTH ##########################
+                lambdafunc = lambda x: self.config.sigma(x)*self.config.sigma(x)
+                lambdamin = min((np.vectorize(lambdafunc)(self.xx[self.masks["core"]])))
+                Bmax = max(np.vectorize(mu_fixed)(self.xx[self.masks["core"]]))
+
+                density_bound = 1/((2*np.pi*lambdamin*self.config.t_max)**(1/2))*np.exp(Bmax**2*self.config.t_max/(2*lambdamin))
+                smoothing_error = max(self.pfxx)*density_bound*(self.epsilon)/2
+
+                max_weak_error = max(max_weak_error, weak_error)
+                max_smoothing_error = max(max_smoothing_error, smoothing_error)
         
 
+        return (float(max_weak_error),float(max_smoothing_error))
 
-
-        ############## WEAK ##########################
-        ### OLD, a verifier 
-        # nu = self.config.sig
-        # theta = 1/self.config.tau
-        
-        ###NEW, pas sûr
-        nu = max(np.vectorize(self.config.sigma)(self.xx[self.masks["core"]]))
-        theta = max(np.vectorize(self.config.mu)(self.xx[self.masks["core"]]))
-        # print(max(self.pfd4xx))
-        # weak_bound = n_t_steps * self.config.dt * self.config.h  # Keeping exact original formula logic
-        weak_bound = self.config.t_max*self.config.h**2*((nu**2)/8*max(self.pfd4xx)+ theta/6*max(self.pfd4xx)) # A VERIFIER
-
-
-        ############## SMOOTH ##########################
-        lambdafunc = lambda x: self.config.sigma(x)*self.config.sigma(x)
-        # lambdamin = self.config.sig**2
-        lambdamin = min((np.vectorize(lambdafunc)(self.xx[self.masks["core"]])))
-        # print(lambdamin)
-        # Bmax = max(np.abs(self.config.x_safe_min),np.abs(self.config.x_safe_max))/self.config.tau
-        Bmax = max(np.vectorize(self.config.mu)(self.xx[self.masks["core"]]))
-        # print(Bmax)
-
-        density_bound = 1/((2*np.pi*lambdamin*self.config.t_max)**(1/2))*np.exp(Bmax**2*self.config.t_max/(2*lambdamin))
-        smoothing_error = max(self.pfxx)*density_bound*(self.epsilon)/2
-
-        return (float(weak_bound),float(smoothing_error))
 
 
 # ----------------------------

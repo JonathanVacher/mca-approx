@@ -1,7 +1,7 @@
 """Configuration module holding SDE model parameters and global state settings."""
 
 import numpy as np
-from typing import Callable
+from typing import Callable, List, Optional
 
 
 class SDEConfig:
@@ -12,7 +12,7 @@ class SDEConfig:
 
     def __init__(
         self,
-        mu: Callable[[float],float],
+        mu: Callable[..., float],  # Can take (x) or (x, u)
         sigma: Callable[[float],float],
         dt: float = 0.05,
         t_max: float = 0.5,
@@ -27,6 +27,7 @@ class SDEConfig:
         x_min: float = -2.5,
         x_max: float = 2.5,
         x_init: float = 0.5,
+        U: Optional[List[float]] = None,  # Discrete control actions, e.g., [-1.0, 1.0]
         seed: int = 5,
     ):
         self.mu = mu
@@ -44,8 +45,10 @@ class SDEConfig:
         self.x_init = x_init
         # self.mu = mu
         # self.sigma = sigma
+        self.U = U
         self.seed = seed
-
+        
+        self.is_controlled = U is not None
         # Enforce global random state reproducibly
         np.random.seed(seed)
 

@@ -161,7 +161,11 @@ class StochasticSimulator:
         )
         self.n_states = self.x_space.shape[0]
 
-        self.q_matrix = self._assemble_generator()
+        if not self.config.is_controlled :
+            self.q_matrix = self._assemble_generator()
+        else :
+            self.q_matrices = self._assemble_generator_controlled()
+
         self.start_idx = np.searchsorted(self.x_space, self.config.x_init)
 
     # ---------------------------------------------------------
@@ -172,8 +176,6 @@ class StochasticSimulator:
 
         h = self.config.h
         q = np.zeros((self.n_states, self.n_states))
-
-
 
         for i in range(self.n_states):
             x = self.x_space[i]
@@ -203,6 +205,65 @@ class StochasticSimulator:
         q[-1, :] = 0.0
 
         return q
+    
+
+    def _assemble_generator_controlled(self) -> list[np.ndarray]:
+        """Assembles a list of continuous-time Markov Chain infinitesimal generator 
+        matrices (Q), where each matrix corresponds to a discrete control choice u in U.
+        
+        Returns:
+            list[np.ndarray]: A list of transition rate matrices of shape (n_states, n_states).
+        """
+        # Ensure that control actions are defined in the configuration
+        if not hasattr(self.config, 'U') or self.config.U is None:
+            raise ValueError("Control actions list 'U' must be specified in config to assemble controlled generators.")
+            
+        h = self.config.h
+        q_matrices = []
+
+        # Iterate through each available control input u
+        for u_val in self.config.U:
+            # Initialize an empty generator matrix for the current control action
+            q_u = np.zeros((self.n_states, self.n_states))
+            
+            for i in range(self.n_states):
+                x_val = self.x_space[i]
+                
+                # Evaluate drift and diffusion coefficients
+                # mu now accepts two arguments: the state x_val and the control action u_val
+                mu_val = self.config.mu(x_val, u_val)
+                sigma_val = self.config.sigma(x_val)
+
+                a = 0.5 * sigma_val**2 / h**2
+                b = mu_val / (2.0 * h)
+
+                rate_up = a + b
+                rate_down = a - b
+
+                # enforce positivity (numerical safety)
+                rate_up = max(rate_up, 0.0)
+                rate_down = max(rate_down, 0.0)
+                
+                # Compute up and down transition rates based on the approximation framework
+                # rate_up = (0.5 * (sigma_val ** 2) / (h ** 2)) + (max(mu_val, 0) / h)
+                # rate_down = (0.5 * (sigma_val ** 2) / (h ** 2)) + (max(-mu_val, 0) / h)
+                
+                # Assign off-diagonal transition rates (ensuring boundary indices aren't exceeded)
+                if i < self.n_states - 1:
+                    q_u[i, i + 1] = rate_up
+                if i > 0:
+                    q_u[i, i - 1] = rate_down
+                if (i>0) & (i < self.n_states - 1):
+                    q_u[i, i] = -(q_u[i, i - 1] + q_u[i, i + 1])
+                    
+                # The diagonal entry must equal the negative sum of out-of-state rates 
+                # so that each row sums to exactly 0 (conservation of probability)
+                # q_u[i, i] = -np.sum(q_u[i, :])
+            q_u[0, :] = 0.0
+            q_u[-1, :] = 0.0
+            q_matrices.append(q_u)
+            
+        return q_matrices
 
     # ---------------------------------------------------------
     # Monte Carlo simulation
@@ -212,12 +273,18 @@ class StochasticSimulator:
         dt = self.config.dt
         t_max = self.config.t_max
         n_steps = int(t_max / dt + 1) 
+        exp_dt_qs = []
+        if not self.config.is_controlled:
+            exp_dt_q = linalg.expm(dt * self.q_matrix).T
+        else :
+            for q in self.q_matrices:
+                exp_dt_qs.append(linalg.expm(dt * q).T)
 
-        exp_dt_q = linalg.expm(dt * self.q_matrix).T
         # start_idx =  np.searchsorted(self.x_space, self.config.x_init) #(self.n_states - 1) // 2
 
         sde_paths = np.zeros((n_reps, n_steps))
         markov_paths = np.zeros((n_reps, n_steps))
+        u_paths = np.zeros((n_reps, n_steps))
 
         # print(n_steps)
         for rep in range(n_reps):
@@ -241,37 +308,78 @@ class StochasticSimulator:
                 # 1. Update SDE path
                 rdnum = np.random.randn()
                 # noise = self.config.sig * np.sqrt(dt) * rdnum
-                mu = self.config.mu(x_sde)
-                sigma = self.config.sigma(x_sde)
+                if not self.config.is_controlled:
+                    mu = self.config.mu(x_sde)
+                    sigma = self.config.sigma(x_sde)
 
-                x_sde = x_sde + mu * dt + sigma * np.sqrt(dt) * rdnum
-                # x_sde = (1 - dt / self.config.tau) * x_sde + noise
-                sde_paths[rep, step_idx] = x_sde
+                    x_sde = x_sde + mu * dt + sigma * np.sqrt(dt) * rdnum
+                    # x_sde = (1 - dt / self.config.tau) * x_sde + noise
+                    sde_paths[rep, step_idx] = x_sde
 
-                # 2. Update Markov chain path
-                next_prob_dist = exp_dt_q @ markov_state_vector
-                next_prob_dist = next_prob_dist/np.sum(next_prob_dist)
-                draw_unif = st.norm.cdf(rdnum)
+                    # 2. Update Markov chain path
+                    next_prob_dist = exp_dt_q @ markov_state_vector
+                    next_prob_dist = next_prob_dist/np.sum(next_prob_dist)
+                    draw_unif = st.norm.cdf(rdnum)
+                    
+                    # Cumulative transition distribution mapping
+                    # draw_states = np.cumsum(draw_unif<np.cumsum(M_))==1
+                    cum_sum_dist = np.cumsum(next_prob_dist)
+                    state_idx = np.searchsorted(cum_sum_dist,draw_unif)
+                    if state_idx >= self.n_states:
+                        state_idx = self.n_states - 1
+
+                    #FIX HERE : make absorbing
+
+                    # state_idx = np.searchsorted(np.cumsum(next_prob_dist), draw_unif)
+                    state_idx = min(max(state_idx, 0), self.n_states - 1)
+
+
+                    markov_state_vector = np.zeros(self.n_states)
+                    markov_state_vector[state_idx] = 1.0
+                    # print(state_idx)
+                    markov_paths[rep, step_idx] = self.x_space[state_idx]
                 
-                # Cumulative transition distribution mapping
-                # draw_states = np.cumsum(draw_unif<np.cumsum(M_))==1
-                cum_sum_dist = np.cumsum(next_prob_dist)
-                state_idx = np.searchsorted(cum_sum_dist,draw_unif)
-                if state_idx >= self.n_states:
-                    state_idx = self.n_states - 1
+                else: 
 
-                #FIX HERE : make absorbing
+                    u_index = np.random.choice(len(self.config.U))
+                    
+                    # print(u_index)
+                    u_val = self.config.U[u_index]
+                    u_paths[rep,step_idx] = u_val
+                    # print(u_val)
+                    mu = self.config.mu(x_sde,u_val)
+                    sigma = self.config.sigma(x_sde)
 
-                # state_idx = np.searchsorted(np.cumsum(next_prob_dist), draw_unif)
-                state_idx = min(max(state_idx, 0), self.n_states - 1)
+                    x_sde = x_sde + mu * dt + sigma * np.sqrt(dt) * rdnum
+                    # x_sde = (1 - dt / self.config.tau) * x_sde + noise
+                    sde_paths[rep, step_idx] = x_sde
+
+                    # 2. Update Markov chain path
+                    next_prob_dist = exp_dt_qs[u_index] @ markov_state_vector
+                    next_prob_dist = next_prob_dist/np.sum(next_prob_dist)
+                    draw_unif = st.norm.cdf(rdnum)
+                    
+                    # Cumulative transition distribution mapping
+                    # draw_states = np.cumsum(draw_unif<np.cumsum(M_))==1
+                    cum_sum_dist = np.cumsum(next_prob_dist)
+                    state_idx = np.searchsorted(cum_sum_dist,draw_unif)
+                    if state_idx >= self.n_states:
+                        state_idx = self.n_states - 1
+
+                    #FIX HERE : make absorbing
+
+                    # state_idx = np.searchsorted(np.cumsum(next_prob_dist), draw_unif)
+                    state_idx = min(max(state_idx, 0), self.n_states - 1)
 
 
-                markov_state_vector = np.zeros(self.n_states)
-                markov_state_vector[state_idx] = 1.0
-                # print(state_idx)
-                markov_paths[rep, step_idx] = self.x_space[state_idx]
+                    markov_state_vector = np.zeros(self.n_states)
+                    markov_state_vector[state_idx] = 1.0
+                    # print(state_idx)
+                    markov_paths[rep, step_idx] = self.x_space[state_idx]
+                
 
-        return {"sde": sde_paths, "markov": markov_paths, "time_steps": np.arange(n_steps) * dt}
+
+        return {"sde": sde_paths, "markov": markov_paths, "time_steps": np.arange(n_steps) * dt, "control" : u_paths}
     
 
 
@@ -292,6 +400,18 @@ class StochasticSimulator:
         plt.axhspan(self.config.x_safe_max, self.config.x_safe_max+self.config.epsilon, color='red', alpha=0.15)
         plt.grid(True)
         plt.show()
+
+        if self.config.is_controlled:
+            plt.figure(figsize=(10, 4))
+            plt.step(sim_results["time_steps"], sim_results["control"][n], label="Control value (random)", color="blue", alpha=0.7)
+            plt.title("Control value over time")
+            plt.xlabel("Time (t)")
+            plt.ylabel("Control (u(t))")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+
+
 
     def plot_mc_sims(self,sim_results):
         plt.figure(figsize=(10, 4))
