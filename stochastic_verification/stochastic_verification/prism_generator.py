@@ -1,77 +1,10 @@
-# """Generates clean, parameterized PRISM CTMC model specification files."""
-
-
-# def generate_prism_model(
-#     config,
-#     simulator
-# ) -> str:
-    
-#     tau=0.5
-#     sig=1.5
-#     h=config.h
-#     n_states=simulator.n_states
-#     x_min=config.x_safe_min-config.h
-#     safe_xmin=config.x_safe_min
-#     safe_xmax=config.x_safe_max
-#     init_state=simulator.start_idx
-
-#     """Generates a PRISM Continuous-Time Markov Chain (CTMC) model string
-
-#     based on a nodal generator discretization matrix.
-#     """
-
-
-#     return f"""ctmc
-
-# // SDE parameters
-# const double tau = {tau};
-# const double sig = {sig};
-
-# // Grid and State Space parameters
-# const double h = {h};
-# const int N = {n_states};
-# const double x_min = {x_min};
-
-# // Safety Set boundaries
-# const double safe_min = {safe_xmin};
-# const double safe_max = {safe_xmax};
-
-# // The physical state space value 'x' for a given index 's'
-# formula x_val = x_min + s * h;
-
-# // Transition rates based on the nodal CTMC generator discretization
-# formula rate_up   = (0.5 * sig * sig / (h * h)) - (x_val / (tau * 2.0 * h));
-# formula rate_down = (0.5 * sig * sig / (h * h)) + (x_val / (tau * 2.0 * h));
-
-# module MCA_Ornstein_Uhlenbeck
-
-#     // State index
-#     s : [0..N-1] init {init_state};
-
-#     // Internal state transitions
-#     [] s > 0 & s < N-1 -> rate_up   : (s'=s+1) + rate_down : (s'=s-1);
-#     [] s = 0          -> rate_up   : (s'=0) + rate_down : (s'=0);
-#     [] s = N-1        -> rate_down : (s'=N-1) + rate_up   : (s'=N-1);
-
-# endmodule
-
-# // Labeling safety criteria
-# label "safe" = x_val >= safe_min & x_val <= safe_max;
-# """
-
-
-#####################################################################
-################ 2nd version 
-#####################################################################
-
-
-
-
-"""Generates PRISM CTMC model with precomputed rates and absorbing boundaries."""
+"""Generates PRISM CTMC/MDP model with precomputed rates and absorbing boundaries."""
 
 import numpy as np
+import scipy.linalg as linalg
 
 
+#CTMC generation 
 def generate_prism_ctmc_model(config, simulator) -> str:
     """
     PRISM CTMC with:
@@ -117,7 +50,7 @@ def generate_prism_ctmc_model(config, simulator) -> str:
     )
 
     # ------------------------------------------------------------
-    # TRANSITIONS WITH TRUE ABSORPTION
+    # TRANSITIONS WITH ABSORBING BC
     # ------------------------------------------------------------
     transitions = []
 
@@ -178,115 +111,180 @@ label "safe" = x_val >= safe_min & x_val <= safe_max;
 
 
 
-
-
-def generate_pctl(config) -> str:
-    """Generates a PRISM pctl properties to verify.
-    """
-    T_max = config.t_max
-    return f"""
-const double T_max = {T_max};
-
-// 1. Path Safety Probability: 
-// Computes the probability that the Markov Chain STAYS continuously 
-// within the safe set [safe_min, safe_max] from time t=0 up to T_max.
-P=? [ G<=T_max "safe" ]
-
-// 2. Fixed-Horizon Target-Set Probability:
-// Computes the probability that the Markov Chain IS CURRENTLY in the 
-// safe set exactly at the final time T_max (Transient probability).
-P=? [ true U[T_max,T_max] "safe" ]
-
-// Find the strategy that MAXIMIZES the probability of staying safe
-// Pmax=? [ G<=T_max "safe" ]
-
-
-"""
-
-
-
-#####################################################################
-################ 3rd version 
-#####################################################################
-
+# MDP generation 
 def generate_prism_mdp_model(config, simulator) -> str:
-    """Generates clean, parameterized PRISM model specification files.
-    Generates an MDP instead of a CTMC when control space is specified.
     """
+    Generate a PRISM MDP whose transition probabilities are the
+    precomputed matrix exponentials
+
+        P_u = exp(dt * Q_u)
+
+    used by the Monte-Carlo simulator.
+    """
+
+    if not config.is_controlled:
+        raise ValueError(
+            "MDP generation requires config.is_controlled=True"
+        )
+
     h = config.h
     n_states = simulator.n_states
     x_min = config.x_safe_min - config.h
+
     safe_xmin = config.x_safe_min
     safe_xmax = config.x_safe_max
     init_state = simulator.start_idx
 
-    model_type = "mdp" if config.is_controlled else "ctmc"
-    
-    lines = []
-    lines.append(f"{model_type}\n")
-    lines.append(f"const double h = {h};")
-    lines.append(f"const int N = {n_states};")
-    lines.append(f"const double x_min = {x_min};\n")
-    lines.append(f"const double safe_min = {safe_xmin};")
-    lines.append(f"const double safe_max = {safe_xmax};")
-    lines.append(f"const int init_state = {init_state};\n")
-    lines.append("formula x_val = x_min + s * h;\n")
-    
-    lines.append("module MCA_SDE")
-    lines.append(f"    s : [0..N-1] init init_state;\n")
-    
-    # Generate transitions
-    for i in range(n_states):
-        x_val = x_min + i * h
-        
-        if config.is_controlled:
-            # Generate non-deterministic choices for each control choice
-            for u_idx, u_val in enumerate(config.U):
-                mu_val = config.mu(x_val, u_val)
-                sigma_val = config.sigma(x_val)
-                
-                # Compute up/down rate dynamics based on standard MCA framework
-                rate_up = (0.5 * sigma_val**2 / (h**2)) + (max(mu_val, 0) / h)
-                rate_down = (0.5 * sigma_val**2 / (h**2)) + (max(-mu_val, 0) / h)
-                
-                # Write command with action label [u0], [u1], etc.
-                transitions = []
-                if i < n_states - 1 and rate_up > 0:
-                    transitions.append(f"{rate_up} : (s'={i+1})")
-                if i > 0 and rate_down > 0:
-                    transitions.append(f"{rate_down} : (s'={i-1})")
-                
-                if transitions:
-                    lines.append(f"    [u{u_idx}] s={i} -> {' + '.join(transitions)};")
-        else:
-            # Standard uncontrolled CTMC transition rates code
-            mu_val = config.mu(x_val)
-            sigma_val = config.sigma(x_val)
-            rate_up = (0.5 * sigma_val**2 / (h**2)) + (max(mu_val, 0) / h)
-            rate_down = (0.5 * sigma_val**2 / (h**2)) + (max(-mu_val, 0) / h)
-            
-            transitions = []
-            if i < n_states - 1 and rate_up > 0:
-                transitions.append(f"{rate_up} : (s'={i+1})")
-            if i > 0 and rate_down > 0:
-                transitions.append(f"{rate_down} : (s'={i-1})")
-                
-            if transitions:
-                lines.append(f"    s={i} -> {' + '.join(transitions)};")
-                
-    lines.append("\nendmodule\n")
-    lines.append('label "safe" = x_val >= safe_min & x_val <= safe_max;')
-    
+    # ----------------------------------------------------------
+    # PRECOMPUTE TRANSITION MATRICES
+    # ----------------------------------------------------------
+
+    transition_matrices = []
+
+    for q_u in simulator.q_matrices:
+        P_u = linalg.expm(config.dt * q_u)
+
+        # numerical cleanup
+        P_u[P_u < 0] = 0.0
+        P_u = P_u / P_u.sum(axis=1, keepdims=True)
+
+        transition_matrices.append(P_u)
+
+    # ----------------------------------------------------------
+    # MODEL HEADER
+    # ----------------------------------------------------------
+
+    lines = [
+        "mdp",
+        "",
+        f"const int N = {n_states};",
+        f"const double h = {h};",
+        f"const double x_min = {x_min};",
+        "",
+        f"const double safe_min = {safe_xmin};",
+        f"const double safe_max = {safe_xmax};",
+        "",
+        f"const int init_state = {init_state};",
+        "",
+        "formula x_val = x_min + s*h;",
+        "",
+        "module MCA_SDE",
+        "",
+        "    s : [0..N-1] init init_state;",
+        ""
+    ]
+
+    # ----------------------------------------------------------
+    # TRANSITIONS
+    # ----------------------------------------------------------
+
+    tol = 1e-10
+
+    for state in range(n_states):
+
+        # absorbing boundaries
+        if state == 0 or state == n_states - 1:
+
+            for action_idx in range(len(config.U)):
+                lines.append(
+                    f"    [u{action_idx}] s={state} -> 1.0:(s'={state});"
+                )
+
+            lines.append("")
+            continue
+
+        # for action_idx, P_u in enumerate(transition_matrices):
+
+        #     row = P_u[state]
+
+        #     successors = []
+
+        #     for target in range(n_states):
+
+        #         p = row[target]
+
+        #         if p > tol:
+        #             successors.append(
+        #                 f"{p:.16g}:(s'={target})"
+        #             )
+
+        #     lines.append(
+        #         f"    [u{action_idx}] s={state} -> "
+        #         + " + ".join(successors)
+        #         + ";"
+        #     )
+
+        for action_idx, P_u in enumerate(transition_matrices):
+
+            row = P_u[state]
+
+            # Keep only significant probabilities
+            kept = [
+                (target, row[target])
+                for target in range(n_states)
+                if row[target] > tol
+            ]
+
+            # Renormalize after truncation
+            total_prob = sum(p for _, p in kept)
+
+            if total_prob <= 0:
+                # numerical fallback
+                successors = [f"1.0:(s'={state})"]
+            else:
+                successors = [
+                    f"{p / total_prob:.16g}:(s'={target})"
+                    for target, p in kept
+                ]
+
+            lines.append(
+                f"    [u{action_idx}] s={state} -> "
+                + " + ".join(successors)
+                + ";"
+            )
+
+        lines.append("")
+
+    lines.extend([
+        "endmodule",
+        "",
+        'label "safe" = x_val >= safe_min & x_val <= safe_max;'
+    ])
+
     return "\n".join(lines)
 
 
-# def generate_pctl(config: SDEConfig) -> str:
-#     """Generates PRISM PCTL properties to verify.
-#     Uses Pmax bounded safety queries when control is specified.
-#     """
-#     T_max = config.t_max
-    
-#     if config.is_controlled:
-#         return f'const double T_max = {T_max};\n\nPmax=? [ G<=T_max "safe" ]'
-#     else:
-#         return f'const double T_max = {T_max};\n\nP=? [ G<=T_max "safe" ]'
+
+
+
+# Properties generation 
+def generate_pctl(config) -> str:
+    """Generates a PRISM pctl properties to verify.
+    """
+
+
+    if not config.is_controlled:
+
+        return f"""
+    const double T_max = {config.t_max};
+
+    // 1. Path Safety Probability: 
+    // Computes the probability that the Markov Chain STAYS continuously 
+    // within the safe set [safe_min, safe_max] from time t=0 up to T_max.
+    P=? [ G<=T_max "safe" ]
+
+    // 2. Fixed-Horizon Target-Set Probability:
+    // Computes the probability that the Markov Chain IS CURRENTLY in the 
+    // safe set exactly at the final time T_max (Transient probability).
+    P=? [ true U[T_max,T_max] "safe" ]
+
+    """
+    else:
+        return f"""
+    const int T_max = {int(config.t_max/config.dt)};
+
+    // Find the strategy that MAXIMIZES the probability of staying safe
+    Pmax=? [ G<=T_max "safe" ]
+
+
+    """
