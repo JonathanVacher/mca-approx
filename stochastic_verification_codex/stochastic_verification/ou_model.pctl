@@ -1,0 +1,9 @@
+
+    const int T_steps = 10;
+
+    // Find the strategy that MAXIMIZES the probability of staying safe
+    // MDP time is counted in discrete steps of length config.dt.
+    Pmax=? [ G<=T_steps "safe" ]
+
+
+    

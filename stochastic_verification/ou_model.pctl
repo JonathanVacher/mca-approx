@@ -1,0 +1,8 @@
+
+    const int T_max = 10;
+
+    // Find the strategy that MAXIMIZES the probability of staying safe
+    Pmax=? [ G<=T_max "safe" ]
+
+
+    
